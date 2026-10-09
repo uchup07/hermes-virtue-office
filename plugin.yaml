@@ -1,5 +1,5 @@
 name: virtue-office
-version: "0.1.0"
+version: "0.2.0"
 description: "Live isometric 3D office for Hermes Agent. Observe sessions, tools, subagents and approval requests at http://127.0.0.1:8114. Local and read-only."
 author: "uchup07"
 hooks:

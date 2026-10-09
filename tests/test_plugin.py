@@ -8,8 +8,11 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
 from urllib.error import HTTPError
+from urllib.parse import urlencode
+from http.cookiejar import CookieJar
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("virtue_plugin", ROOT / "__init__.py")
@@ -153,30 +156,37 @@ class HttpTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.store=plugin.Store(self.temp.name)
-        self.server=plugin.OfficeServer(("127.0.0.1",0),plugin.make_handler(self.store))
+        self.auth=plugin.OfficeAuth("test-office-password")
+        self.token,_=self.auth.login("test-office-password")
+        self.server=plugin.OfficeServer(("127.0.0.1",0),plugin.make_handler(self.store, auth=self.auth))
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.base=f"http://127.0.0.1:{self.server.server_port}"
+
+    def open(self, request):
+        request = Request(request) if isinstance(request, str) else request
+        request.add_header("Cookie", "virtue_session=" + self.token)
+        return urlopen(request)
 
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.thread.join();self.temp.cleanup()
 
     def test_state_health_and_assets(self):
         self.store.apply("session_start",{"session_id":"main"})
-        with urlopen(self.base+"/state") as r:
+        with self.open(self.base+"/state") as r:
             state=json.load(r);self.assertEqual(state["service"],"hermes-virtue-office");self.assertEqual(state["mode"],"live");self.assertEqual(len(state["agents"]),1)
             self.assertIsNone(r.headers.get("Access-Control-Allow-Origin"))
         for route,mime in [("/","text/html"),("/app.js","text/javascript"),("/assets/01_Manager_Navy.glb","model/gltf-binary")]:
-            with urlopen(self.base+route) as r:self.assertIn(mime,r.headers["Content-Type"]);self.assertTrue(r.read())
+            with self.open(self.base+route) as r:self.assertIn(mime,r.headers["Content-Type"]);self.assertTrue(r.read())
 
     def test_no_state_mutation_or_path_escape(self):
         for route in ("/../__init__.py","/%2e%2e/__init__.py","/.git/config"):
-            with self.assertRaises(HTTPError) as ctx:urlopen(self.base+route)
+            with self.assertRaises(HTTPError) as ctx:self.open(self.base+route)
             self.assertEqual(ctx.exception.code,404);ctx.exception.close()
-        with self.assertRaises(HTTPError) as ctx:urlopen(Request(self.base+"/approve",data=b'{}'))
+        with self.assertRaises(HTTPError) as ctx:self.open(Request(self.base+"/approve",data=b'{}'))
         self.assertEqual(ctx.exception.code,405);ctx.exception.close()
 
     def test_foreign_host_rejected(self):
-        with self.assertRaises(HTTPError) as ctx:urlopen(Request(self.base+"/state",headers={"Host":"attacker.example"}))
+        with self.assertRaises(HTTPError) as ctx:self.open(Request(self.base+"/state",headers={"Host":"attacker.example"}))
         self.assertEqual(ctx.exception.code,403);ctx.exception.close()
 
     def test_follower_takes_over_after_server_exit(self):
@@ -191,8 +201,73 @@ class HttpTests(unittest.TestCase):
             time.sleep(.01)
         try:
             self.assertIsNotNone(follower.server)
-            with urlopen(self.base+"/health") as r:self.assertEqual(json.load(r)["service"],"hermes-virtue-office")
+            with self.open(self.base+"/health") as r:self.assertEqual(json.load(r)["service"],"hermes-virtue-office")
         finally:follower.close()
+
+
+    def test_auth_blocks_html_state_and_assets(self):
+        opener = build_opener(HTTPCookieProcessor(CookieJar()))
+        for route in ("/", "/playground.html"):
+            with opener.open(self.base + route) as response:
+                self.assertTrue(response.url.endswith("/login"))
+                self.assertIn(b"PASSWORD KANTOR", response.read())
+        for route in ("/state", "/app.js", "/assets/01_Manager_Navy.glb"):
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(self.base + route)
+            self.assertEqual(ctx.exception.code, 401)
+            ctx.exception.close()
+
+    def test_login_wrong_password_success_and_logout(self):
+        jar = CookieJar()
+        opener = build_opener(HTTPCookieProcessor(jar))
+        with opener.open(self.base + "/login") as response:
+            csrf = re.search(r'name="csrf" value="([^"]+)"', response.read().decode()).group(1)
+        with self.assertRaises(HTTPError) as ctx:
+            opener.open(Request(self.base + "/login", data=urlencode({"csrf": csrf, "password": "wrong"}).encode()))
+        self.assertEqual(ctx.exception.code, 401)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', ctx.exception.read().decode()).group(1)
+        ctx.exception.close()
+        with opener.open(Request(self.base + "/login", data=urlencode({"csrf": csrf, "password": "test-office-password"}).encode())) as response:
+            self.assertEqual(response.url, self.base + "/")
+            self.assertIn(b"Hermes Virtue Office", response.read())
+        with opener.open(self.base + "/state") as response:
+            self.assertEqual(json.load(response)["service"], "hermes-virtue-office")
+        cookie = next(c for c in jar if c.name == "virtue_session")
+        self.assertIn("HttpOnly", cookie._rest)
+        self.assertEqual(cookie._rest["SameSite"], "Strict")
+        with opener.open(Request(self.base + "/logout", data=b"", headers={"X-Virtue-Logout": "1"})) as response:
+            self.assertEqual(response.status, 204)
+        self.assertFalse(self.auth.authenticated(cookie.value))
+        with self.assertRaises(HTTPError) as ctx:
+            opener.open(self.base + "/state")
+        self.assertEqual(ctx.exception.code, 401)
+        ctx.exception.close()
+
+    def test_login_rejects_csrf_and_limits_attempts(self):
+        with self.assertRaises(HTTPError) as ctx:
+            urlopen(Request(self.base + "/login", data=b"password=test-office-password&csrf=invalid"))
+        self.assertEqual(ctx.exception.code, 403)
+        ctx.exception.close()
+        for _ in range(4):
+            self.assertEqual(self.auth.login("wrong")[1], 401)
+        self.assertEqual(self.auth.login("test-office-password")[1], 429)
+        with patch.object(plugin.time, "time", return_value=time.time()+61):
+            self.assertEqual(self.auth.login("test-office-password")[1], 200)
+
+    def test_session_expiry_and_unknown_cookie(self):
+        self.assertFalse(self.auth.authenticated("invented"))
+        with patch.object(plugin.time, "time", return_value=time.time()+self.auth.lifetime+1):
+            self.assertFalse(self.auth.authenticated(self.token))
+
+    def test_unconfigured_office_locks_instead_of_exposing_data(self):
+        locked = plugin.OfficeAuth("")
+        self.assertFalse(locked.configured)
+        self.assertFalse(locked.authenticated(""))
+        self.assertEqual(locked.login("anything")[1], 401)
+
+    def test_https_proxy_sets_secure_cookie(self):
+        with self.open(Request(self.base + "/login", headers={"X-Forwarded-Proto": "https"})) as response:
+            self.assertIn("; Secure", response.headers["Set-Cookie"])
 
 
 if __name__=="__main__":unittest.main()

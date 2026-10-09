@@ -13,9 +13,40 @@ git clone https://github.com/uchup07/hermes-virtue-office.git ~/.hermes/plugins/
 hermes plugins enable virtue-office
 ```
 
-Start a **new Hermes session**, then open **http://127.0.0.1:8114**. The server starts when the plugin receives its first session event. For a custom Hermes profile, clone into `$HERMES_HOME/plugins/virtue-office` instead.
+Configure a password as described below. Start a **new Hermes session**, then open **http://127.0.0.1:8114**. The server starts when the plugin receives its first session event. For a custom Hermes profile, clone into `$HERMES_HOME/plugins/virtue-office` instead.
 
 The office observes Hermes; approval decisions are still made in Hermes. A character is assigned to each session, with separate characters for subagents.
+
+## Password-protected access
+
+All office pages, JavaScript, models and `/state` require a login. When no password is configured, the office stays locked and the standalone server refuses to start. `/health` remains public for a minimal service check.
+
+Create a private password file on the machine running Hermes (the password prompt hides what you type):
+
+```sh
+python3 - <<'PYTHON'
+from getpass import getpass
+from pathlib import Path
+import os
+password = getpass("Office password: ")
+if not password or password != getpass("Confirm password: "):
+    raise SystemExit("Passwords must match and cannot be empty")
+path = Path.home() / ".hermes" / "virtue-office-password"
+path.parent.mkdir(parents=True, exist_ok=True)
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+os.fchmod(fd, 0o600)
+with os.fdopen(fd, "w") as file:
+    file.write(password)
+print("Password saved to", path)
+PYTHON
+export VIRTUE_OFFICE_PASSWORD_FILE="$HOME/.hermes/virtue-office-password"
+```
+
+Run Hermes or `python3 serve.py --demo` from that environment, then open the office and enter the password. Alternatively, provide `VIRTUE_OFFICE_PASSWORD` through your service's secret/environment configuration. The file setting takes precedence if both are provided. Do not commit a password or password file to Git. A service manager must receive the same environment setting; an export in a separate terminal does not update an already running service.
+
+Login sessions last eight hours. **Keluar** invalidates the session immediately. Restart the office server after changing the password; restarting also invalidates all existing sessions. Password verification uses PBKDF2-SHA256, sessions use random server-side tokens, and login allows five attempts per minute per server.
+
+For public access, serve the office through an **HTTPS reverse proxy** pointing to `127.0.0.1:8114`. Preserve the existing local upstream Host header (`127.0.0.1:8114`) and set `X-Forwarded-Proto: https` so cookies have the Secure flag. The proxy must forward `/login`, `/logout`, `/state` and static routes to the Python server; serving the `web/` folder directly bypasses its login checks. The application still binds to loopback.
 
 ## Try without Hermes
 
@@ -71,7 +102,7 @@ Use `--data-dir /path/to/virtue-office` for an explicit state directory. `--demo
 
 State is shared across local Hermes processes through SQLite at `$HERMES_HOME/virtue-office/state.sqlite3` (default `~/.hermes/virtue-office/state.sqlite3`). Stored metadata includes session IDs, role labels, tool names, timestamps and counters. Prompts, tool arguments, commands, results and raw error messages are not stored. Recent history is bounded to 500 events.
 
-The HTTP server binds to `127.0.0.1`, rejects foreign Host headers, exposes no write endpoint and serves bundled assets. Plugin failures return without blocking Hermes. The browser polls `/state`; `/health` identifies the service. The demo is labelled separately from live activity.
+The HTTP server binds to `127.0.0.1`, rejects foreign Host headers, exposes only login/logout POST endpoints (no Hermes write actions) and serves bundled assets. Plugin failures return without blocking Hermes. The browser polls `/state`; `/health` identifies the service. The demo is labelled separately from live activity.
 
 ## Validation and limits
 
@@ -80,7 +111,7 @@ python3 -m unittest discover -s tests -v
 npm test
 ```
 
-Tests cover hook registration, approval and lifecycle mapping, shared state across processes, database contention, server takeover, static-file containment, read-only HTTP behavior and character navigation. CI runs these checks on pushes and pull requests.
+Tests cover hook registration, approval and lifecycle mapping, shared state across processes, database contention, server takeover, static-file containment, read-only HTTP behavior character navigation, login enforcement, wrong passwords, CSRF protection, rate limits, session expiry and logout. CI runs these checks on pushes and pull requests.
 
 The implementation was checked against the Hermes plugin API at commit `1744a19e0df568c647e4f3ff9c37f2a284a282fb`, with simulated hook payloads and a browser demo. A real Hermes/LLM session has not been run in this development environment; compatibility with other Hermes revisions may require adjustments.
 

@@ -47,7 +47,7 @@ async function syncActors(){
  // Sequential loads also reserve seats deterministically during bursts.
  for(const a of snapshot.agents){if([...actors.values()].filter(c=>!c.exitComplete).length>=MAX_VISIBLE)break;await spawn(a);}
  updateRoster();}
-async function poll(){if(polling)return;polling=true;try{const response=await fetch('/state',{cache:'no-store',signal:AbortSignal.timeout(4500)});if(!response.ok)throw Error('state unavailable');const data=await response.json();if(!validSnapshot(data))throw Error('incompatible service');snapshot=data;connected=true;$('connection').textContent='TERHUBUNG';$('connection-dot').classList.remove('offline');$('mode').hidden=data.mode!=='demo';
+async function poll(){if(polling)return;polling=true;try{const response=await fetch('/state',{cache:'no-store',signal:AbortSignal.timeout(4500)});if(response.status===401){location.replace('/login');return;}if(!response.ok)throw Error('state unavailable');const data=await response.json();if(!validSnapshot(data))throw Error('incompatible service');snapshot=data;connected=true;$('connection').textContent='TERHUBUNG';$('connection-dot').classList.remove('offline');$('mode').hidden=data.mode!=='demo';
  const waiting=new Set(data.agents.filter(a=>a.approval).map(a=>a.id));const done=new Set(data.agents.filter(a=>a.status==='done').map(a=>a.id));if([...waiting].some(id=>!seenWaiting.has(id))||[...done].some(id=>!seenDone.has(id)))ping();seenWaiting=waiting;seenDone=done;
  if(waiting.size){$('notice').hidden=false;$('notice').textContent=`${waiting.size} agent menunggu persetujuan. Jawab di Hermes untuk melanjutkan.`;noticeTimer=2;}
  await syncActors();

@@ -49,11 +49,14 @@ def main():
     if args.demo and args.data_dir:
         p.error("--demo uses temporary data; do not combine it with --data-dir")
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    auth = office.OfficeAuth()
+    if not auth.configured:
+        p.error("set VIRTUE_OFFICE_PASSWORD or VIRTUE_OFFICE_PASSWORD_FILE before starting")
     temp = tempfile.TemporaryDirectory(prefix="virtue-office-demo-") if args.demo else None
     directory = Path(temp.name) if temp else args.data_dir or Path(office.os.environ.get("HERMES_HOME", Path.home()/".hermes"))/"virtue-office"
     runtime = office.Runtime(directory, args.port, "demo" if args.demo else "live")
     # Standalone startup reports port conflicts immediately.
-    server = office.OfficeServer(("127.0.0.1", args.port), office.make_handler(runtime.store, runtime.mode))
+    server = office.OfficeServer(("127.0.0.1", args.port), office.make_handler(runtime.store, runtime.mode, auth))
     runtime.server = server
     stop = threading.Event()
     feed = threading.Thread(target=demo, args=(runtime, stop), daemon=True) if args.demo else None

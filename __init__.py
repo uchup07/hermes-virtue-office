@@ -8,6 +8,10 @@ from __future__ import annotations
 import contextvars
 from contextlib import contextmanager
 import json
+import hashlib
+import hmac
+import secrets
+from http.cookies import SimpleCookie
 import logging
 import mimetypes
 import os
@@ -16,9 +20,9 @@ import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_PORT = 8114
 WEB = Path(__file__).resolve().parent / "web"
 logger = logging.getLogger("hermes.virtue-office")
@@ -183,12 +187,76 @@ class OfficeServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def make_handler(store, mode="live"):
+class OfficeAuth:
+    """Server-side sessions. An unset password locks the office until configured."""
+    lifetime = 8 * 60 * 60
+
+    def __init__(self, password=None):
+        if password is None:
+            password = os.environ.get("VIRTUE_OFFICE_PASSWORD", "")
+            password_file = os.environ.get("VIRTUE_OFFICE_PASSWORD_FILE")
+            if password_file:
+                password = Path(password_file).read_text().rstrip("\r\n")
+        self.configured = bool(password)
+        self.salt = secrets.token_bytes(32)
+        self.digest = self.hash_password(password) if self.configured else b""
+        self.key = secrets.token_bytes(32)
+        self.sessions = {}
+        self.attempts = []
+        self.lock = threading.Lock()
+
+    def hash_password(self, password):
+        return hashlib.pbkdf2_hmac("sha256", password.encode(), self.salt, 600_000)
+
+    def csrf_token(self):
+        value = f"{int(time.time())}.{secrets.token_hex(24)}"
+        return value + "." + hmac.new(self.key, value.encode(), "sha256").hexdigest()
+
+    def valid_csrf(self, token, cookie):
+        if not token or not hmac.compare_digest(token.encode(), cookie.encode()):
+            return False
+        try:
+            stamp, nonce, signature = token.split(".")
+            expected = hmac.new(self.key, f"{stamp}.{nonce}".encode(), "sha256").hexdigest()
+            return 0 <= time.time() - int(stamp) < 900 and hmac.compare_digest(signature, expected)
+        except (ValueError, TypeError):
+            return False
+
+    def login(self, password):
+        now = time.time()
+        with self.lock:
+            self.attempts = [t for t in self.attempts if now - t < 60]
+            if len(self.attempts) >= 5:
+                return None, 429
+            self.attempts.append(now)
+            if not self.configured or not hmac.compare_digest(self.hash_password(password), self.digest):
+                return None, 401
+            token = secrets.token_urlsafe(32)
+            self.sessions = {k: v for k, v in self.sessions.items() if v > now}
+            self.sessions[hashlib.sha256(token.encode()).digest()] = now + self.lifetime
+            return token, 200
+
+    def authenticated(self, token):
+        with self.lock:
+            key = hashlib.sha256(token.encode()).digest()
+            expires = self.sessions.get(key, 0)
+            if expires <= time.time():
+                self.sessions.pop(key, None)
+                return False
+            return True
+
+    def logout(self, token):
+        with self.lock:
+            self.sessions.pop(hashlib.sha256(token.encode()).digest(), None)
+
+
+def make_handler(store, mode="live", auth=None):
+    auth = auth if auth is not None else OfficeAuth()
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
 
-        def reply(self, code, body=b"", mime="text/plain; charset=utf-8"):
+        def reply(self, code, body=b"", mime="text/plain; charset=utf-8", headers=()):
             self.send_response(code)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(body)))
@@ -196,20 +264,55 @@ def make_handler(store, mode="live"):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'self'")
+            for name, value in headers:
+                self.send_header(name, value)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
+
+        def cookie(self, name):
+            try:
+                cookies = SimpleCookie(self.headers.get("Cookie", ""))
+                return cookies[name].value if name in cookies else ""
+            except Exception:
+                return ""
+
+        def cookie_header(self, name, value, age):
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""
+            return ("Set-Cookie", f"{name}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}{secure}")
+
+        def local_host(self):
+            try:
+                return urlsplit("//" + self.headers.get("Host", "")).hostname in ("127.0.0.1", "localhost", "::1")
+            except ValueError:
+                return False
+
+        def login_page(self, status=200, message=""):
+            if not auth.configured:
+                self.reply(503, b"Office locked: configure VIRTUE_OFFICE_PASSWORD or VIRTUE_OFFICE_PASSWORD_FILE on the server, then restart.")
+                return
+            csrf = auth.csrf_token()
+            body = (WEB / "login.html").read_text().replace("{{CSRF}}", csrf).replace("{{MESSAGE}}", message).encode()
+            self.reply(status, body, "text/html; charset=utf-8", [self.cookie_header("virtue_csrf", csrf, 900)])
 
         def do_HEAD(self):
             self.do_GET()
 
         def do_GET(self):
             # Loopback bind + Host check + no CORS: local runtime metadata stays local.
-            host = self.headers.get("Host", "").split(":")[0].lower()
-            if host not in ("127.0.0.1", "localhost"):
+            if not self.local_host():
                 self.reply(403, b"Localhost only")
                 return
             route = unquote(urlsplit(self.path).path)
+            if route == "/login":
+                self.login_page()
+                return
+            if route != "/health" and not auth.authenticated(self.cookie("virtue_session")):
+                if route == "/" or route.endswith(".html"):
+                    self.reply(302, headers=[("Location", "/login")])
+                else:
+                    self.reply(401, b'{"error":"login required"}', "application/json")
+                return
             if route in ("/health", "/state"):
                 payload = {"service": "hermes-virtue-office", "version": VERSION, "mode": mode}
                 if route == "/state":
@@ -232,7 +335,46 @@ def make_handler(store, mode="live"):
                 pass
 
         def do_POST(self):
-            self.reply(405, b"Read-only observer; use Hermes to act on approvals")
+            if not self.local_host():
+                self.reply(403, b"Localhost only")
+                return
+            route = urlsplit(self.path).path
+            if route == "/logout":
+                if self.headers.get("X-Virtue-Logout") != "1":
+                    self.reply(403, b"Invalid logout request")
+                    return
+                auth.logout(self.cookie("virtue_session"))
+                self.reply(204, headers=[self.cookie_header("virtue_session", "", 0)])
+                return
+            if route != "/login":
+                self.reply(405, b"Read-only observer; use Hermes to act on approvals")
+                return
+            if not auth.configured:
+                self.login_page()
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if not 0 < length <= 4096:
+                self.reply(400, b"Invalid login request")
+                return
+            self.connection.settimeout(5)
+            try:
+                fields = parse_qs(self.rfile.read(length).decode("utf-8"), max_num_fields=4)
+                csrf = fields.get("csrf", [""])[0]
+                password = fields.get("password", [""])[0]
+            except (ValueError, UnicodeError, OSError):
+                self.reply(400, b"Invalid login request")
+                return
+            if not auth.valid_csrf(csrf, self.cookie("virtue_csrf")):
+                self.login_page(403, "Halaman login kedaluwarsa. Silakan coba lagi.")
+                return
+            token, status = auth.login(password)
+            if not token:
+                self.login_page(status, "Terlalu banyak percobaan. Tunggu satu menit." if status == 429 else "Password tidak sesuai. Silakan coba lagi.")
+                return
+            self.reply(303, headers=[("Location", "/"), self.cookie_header("virtue_session", token, auth.lifetime), self.cookie_header("virtue_csrf", "", 0)])
 
     return Handler
 
