@@ -17,8 +17,8 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     env:
-      HERMES_HOME_HOST: ${{ runner.temp }}/virtue-hermes
-      OFFICE_PASSWORD_FILE: ${{ runner.temp }}/virtue-password
+      HERMES_HOME_HOST: /tmp/virtue-hermes
+      OFFICE_PASSWORD_FILE: /tmp/virtue-password
     steps:
       - uses: actions/checkout@v4
       - name: Prepare shared state and test password
