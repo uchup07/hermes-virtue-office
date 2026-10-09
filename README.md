@@ -64,6 +64,8 @@ No package installation, Node.js or external CDN is needed to run the viewer. Us
 - **Live office:** characters enter, walk to a seat, turn on their monitor and animate according to tool activity. Reading, typing, browsing, terminal work, waiting for approval and session completion have distinct states. Doors open as characters approach. Click a character or roster entry to focus it.
 - **Playground:** click **Coba kontrol karakter** to try manual movement, sitting, work tasks, computer power and doors. This is a separate sandbox and does not control Hermes.
 
+Speech bubbles above every visible character describe their current activity in Indonesian. Live bubbles follow Hermes tool/lifecycle metadata (they do not reveal prompts or tool arguments); approval requests have an amber bubble. In the playground, bubbles follow walking, sitting, computer power, door interactions and task completion.
+
 Right-drag rotates the camera; scroll zooms. The isometric button resets the view. Pause affects animation only. Sound notifications are opt-in.
 
 The office has 12 visible seats. Additional sessions remain in the roster and enter when a seat becomes available. The five appearances are assigned consistently from session IDs, so different sessions can share a character style.

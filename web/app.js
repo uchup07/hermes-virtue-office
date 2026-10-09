@@ -4,6 +4,8 @@ import {buildOffice,optimizeOffice,office,obstacles,stations,seats,doors,powerSc
 import {people,loadCharacter,animateCharacter} from './characters.js';
 import {pathfind} from './nav.js';
 import {MAX_VISIBLE,visualState,describe,chooseAvatar,validSnapshot} from './live-state.js';
+import {liveActivity} from './activity-text.js';
+import {createBubble,updateBubble,placeBubbles} from './activity-bubbles.js';
 const $=id=>document.getElementById(id),mount=$('scene');
 const scene=new T.Scene();scene.background=new T.Color('#e6e9df');
 const camera=new T.OrthographicCamera(-10,10,10,-10,.1,150);
@@ -36,7 +38,7 @@ function route(c,to,mode){const path=pathfind(c.root.position,to,obstacles);if(p
 async function spawn(a){if(loadErrors.has(a.id)||loading.has(a.id)||actors.has(a.id)||['done','gone'].includes(a.status))return;const seat=reserveSeat();if(!seat)return;loading.add(a.id);
  try{const p=people[chooseAvatar(a.id)],c=await loadCharacter({...p,start:[1.45,5.1],station:seatPool.indexOf(seat)});const latest=snapshot.agents.find(x=>x.id===a.id);if(!latest||['done','gone'].includes(latest.status))return;
  c.id=a.id;c.agent=latest;c.seat=seat;c.motion='arriving';c.exitComplete=false;c.finishedAt=null;scene.add(c.root);actors.set(a.id,c);
- const label=document.createElement('div');label.className='agent-label';$('labels').append(label);c.label=label;
+ c.bubble=createBubble($('labels'));c.label=c.bubble.element;
  const pick=new T.Mesh(new T.BoxGeometry(.65,1.7,.65),new T.MeshBasicMaterial({visible:false}));pick.position.y=.85;pick.userData.actor=a.id;c.root.add(pick);pickable.push(pick);c.pick=pick;
  c.book=new T.Mesh(new T.BoxGeometry(.32,.06,.25),new T.MeshStandardMaterial({color:'#dfc483'}));c.book.position.set(0,.93,.24);c.book.visible=false;c.root.add(c.book);
  doors[2].open=true;route(c,seat,'arriving');if(!selected)selected=a.id;
@@ -63,7 +65,7 @@ function updateActor(c,dt,t){const v=visualState(c.agent);
  else if(c.motion==='leaving'){c.motion='exited';c.exitComplete=true;c.root.visible=false;c.label.hidden=true;}
  applyPose(c,dt,t);
 }
-const projection=new T.Vector3();function labels(){const r=renderer.domElement.getBoundingClientRect();for(const c of actors.values()){c.label.hidden=!c.root.visible;projection.copy(c.root.position);projection.y+=1.82;projection.project(camera);if(projection.z>1){c.label.hidden=true;continue;}c.label.style.left=(r.left+(projection.x+1)*r.width/2)+'px';c.label.style.top=(r.top+(1-projection.y)*r.height/2)+'px';c.label.textContent=(c.agent.approval?'! ':c.agent.kind==='subagent'?'↳ ':'')+c.agent.label.slice(0,23);c.label.className='agent-label'+(c.agent.approval?' waiting':'')+(c.agent.kind==='subagent'?' subagent':'')+(c.id===selected?' selected':'');}}
+function labels(){for(const c of actors.values()){updateBubble(c.bubble,(c.agent.kind==='subagent'?'↳ ':'')+c.agent.label,liveActivity(c.agent,c.motion,c.path.length>0),{selected:c.id===selected,waiting:visualState(c.agent)==='waiting',subagent:c.agent.kind==='subagent'});}placeBubbles(actors.values(),camera,renderer.domElement);}
 const ray=new T.Raycaster(),mouse=new T.Vector2();let down=null;renderer.domElement.addEventListener('pointerdown',e=>{if(e.button===0)down=[e.clientX,e.clientY];});renderer.domElement.addEventListener('pointerup',e=>{if(e.button!==0||!down)return;const moved=Math.hypot(e.clientX-down[0],e.clientY-down[1]);down=null;if(moved>6)return;const r=renderer.domElement.getBoundingClientRect();mouse.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(mouse,camera);const h=ray.intersectObjects(pickable.filter(p=>p.parent.visible),false)[0];if(h)choose(h.object.userData.actor);});renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
 $('reset-camera').onclick=resetCamera;$('zoom-in').onclick=()=>{camera.zoom=Math.min(3.5,camera.zoom*1.18);camera.updateProjectionMatrix();};$('zoom-out').onclick=()=>{camera.zoom=Math.max(.65,camera.zoom/1.18);camera.updateProjectionMatrix();};$('focus-agent').onclick=focusSelected;$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'▶':'Ⅱ';$('pause').setAttribute('aria-label',paused?'Lanjutkan animasi':'Jeda animasi');};$('sound').onclick=async()=>{sound=!sound;if(sound){audio ||= new AudioContext();await audio.resume();}try{localStorage.setItem('virtue-sound',String(sound));}catch{}$('sound').setAttribute('aria-pressed',String(sound));$('sound').setAttribute('aria-label',sound?'Matikan suara notifikasi':'Aktifkan suara notifikasi');};
 $('loading').style.opacity=0;setTimeout(()=>$('loading')?.remove(),500);poll();
