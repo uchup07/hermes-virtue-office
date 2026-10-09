@@ -21,3 +21,20 @@ test('manual bubbles explain booting, work and approaching a door',()=>{
  assert.equal(playgroundActivity({state:'working'}),'Saya mengerjakan tugas.');
  assert.equal(playgroundActivity({state:'walking',pending:{kind:'door'}}),'Saya menuju pintu.');
 });
+
+import {desiredLocation,freeLoungeSpot,loungeSpots} from '../web/lounge.js';
+test('idle rests in the lounge; work, thinking and approvals return to the desk',()=>{
+ assert.equal(desiredLocation({status:'idle'}),'lounge');
+ for(const status of ['working','thinking','waiting'])assert.equal(desiredLocation({status}),'desk');
+ assert.equal(desiredLocation({status:'idle',approval:true}),'desk');
+ assert.equal(liveActivity({status:'idle'},'to-lounge',true),'Saya menuju ruang santai.');
+ assert.equal(liveActivity({status:'idle'},'lounging',false),'Saya beristirahat, siap untuk tugas baru.');
+});
+test('lounge spots are exclusive and sofa approaches avoid furniture',()=>{
+ const occupants=loungeSpots.map((loungeSpot,i)=>({id:String(i),loungeSpot}));
+ assert.equal(freeLoungeSpot(occupants),undefined);
+ assert.equal(freeLoungeSpot(occupants,'2'),loungeSpots[2]);
+ assert.equal(freeLoungeSpot(occupants.map(c=>c.id==='2'?{...c,exitComplete:true}:c)),loungeSpots[2]);
+ const furniture=[{x:5.3,z:3.46,w:1.2,d:2.9},{x:3.61,z:3.42,w:.98,d:1.94},{x:5.22,z:.65,w:1.43,d:.6}];
+ for(const spot of loungeSpots){assert.equal(blocked(spot.x,spot.z,furniture),false);assert.ok(pathfind({x:1.45,z:5.1},spot,furniture));}
+});

@@ -15,6 +15,8 @@ export function liveActivity(agent, motion, moving) {
   const state = visualState(agent);
   // Approval and completed sessions remain visible even while a character moves.
   if (state === 'waiting' || state === 'leaving') return messages[state];
+  if (motion === 'to-lounge') return 'Saya menuju ruang santai.';
+  if (motion === 'lounging' && state === 'idle') return 'Saya beristirahat, siap untuk tugas baru.';
   if (moving && motion === 'arriving') return 'Saya menuju meja kerja.';
   return messages[state];
 }

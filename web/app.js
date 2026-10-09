@@ -4,6 +4,7 @@ import {buildOffice,optimizeOffice,office,obstacles,stations,seats,doors,powerSc
 import {people,loadCharacter,animateCharacter} from './characters.js';
 import {pathfind} from './nav.js';
 import {MAX_VISIBLE,visualState,describe,chooseAvatar,validSnapshot} from './live-state.js';
+import {desiredLocation,freeLoungeSpot} from './lounge.js';
 import {liveActivity} from './activity-text.js';
 import {createBubble,updateBubble,placeBubbles} from './activity-bubbles.js';
 const $=id=>document.getElementById(id),mount=$('scene');
@@ -35,13 +36,24 @@ function updateRoster(){const ids=new Set(snapshot.agents.map(a=>a.id));for(cons
  const e=snapshot.events?.[0];$('last-event').textContent=e?`${e.label} · ${e.tool||e.event.replaceAll('_',' ')}`:'Tidak ada aktivitas';updatePanel();}
 function reserveSeat(excludeId=null){const used=new Set([...actors.values()].filter(c=>!c.exitComplete&&c.id!==excludeId).map(c=>c.seat));return seatPool.find(s=>!used.has(s));}
 function route(c,to,mode){const path=pathfind(c.root.position,to,obstacles);if(path){c.path=path;c.motion=mode;c.state='walking';return true;}c.motion='blocked';c.path=[];return false;}
+function standFromLounge(c){if(c.motion==='lounging'&&c.loungeSpot?.sitting){c.root.position.set(c.loungeSpot.x,0,c.loungeSpot.z);}else c.root.position.y=0;}
+function relocate(c,destination){
+ standFromLounge(c);
+ if(c.seat?.station)powerScreen(c.seat.station,false);
+ if(destination==='lounge'){
+  c.loungeSpot ||= freeLoungeSpot(actors.values(),c.id);
+  if(!c.loungeSpot)return false;
+  if(route(c,c.loungeSpot,'to-lounge')){c.destination='lounge';return true;}
+ }else if(route(c,c.seat,'arriving')){c.loungeSpot=null;c.destination='desk';return true;}
+ return false;
+}
 async function spawn(a){if(loadErrors.has(a.id)||loading.has(a.id)||actors.has(a.id)||['done','gone'].includes(a.status))return;const seat=reserveSeat();if(!seat)return;loading.add(a.id);
  try{const p=people[chooseAvatar(a.id)],c=await loadCharacter({...p,start:[1.45,5.1],station:seatPool.indexOf(seat)});const latest=snapshot.agents.find(x=>x.id===a.id);if(!latest||['done','gone'].includes(latest.status))return;
  c.id=a.id;c.agent=latest;c.seat=seat;c.motion='arriving';c.exitComplete=false;c.finishedAt=null;scene.add(c.root);actors.set(a.id,c);
  c.bubble=createBubble($('labels'));c.label=c.bubble.element;
  const pick=new T.Mesh(new T.BoxGeometry(.65,1.7,.65),new T.MeshBasicMaterial({visible:false}));pick.position.y=.85;pick.userData.actor=a.id;c.root.add(pick);pickable.push(pick);c.pick=pick;
  c.book=new T.Mesh(new T.BoxGeometry(.32,.06,.25),new T.MeshStandardMaterial({color:'#dfc483'}));c.book.position.set(0,.93,.24);c.book.visible=false;c.root.add(c.book);
- doors[2].open=true;route(c,seat,'arriving');if(!selected)selected=a.id;
+ doors[2].open=true;relocate(c,desiredLocation(c.agent));if(!selected)selected=a.id;
  }catch(error){loadErrors.add(a.id);console.error('Character asset could not load',error);notify('Model karakter gagal dimuat. Muat ulang halaman untuk mencoba lagi.');}finally{loading.delete(a.id);}}
 function remove(c){if(c.seat?.station)powerScreen(c.seat.station,false);scene.remove(c.root);c.label.remove();const i=pickable.indexOf(c.pick);if(i>=0)pickable.splice(i,1);c.root.traverse(o=>{if(o.isMesh)o.geometry.dispose();});actors.delete(c.id);}
 async function syncActors(){
@@ -55,17 +67,20 @@ async function poll(){if(polling)return;polling=true;try{const response=await fe
  await syncActors();
  }catch(error){connected=false;$('connection').textContent='TERPUTUS';$('connection-dot').classList.add('offline');$('summary').textContent='Mencoba menghubungkan ulang…';updatePanel();}finally{polling=false;setTimeout(poll,1000);}}
 function applyPose(c,dt,t){const v=visualState(c.agent);if(c.motion==='seated'){c.state=['typing','terminal','browsing','working','delegating'].includes(v)?'working':'sitting';if(c.seat.station){powerScreen(c.seat.station,!['idle','leaving'].includes(v));c.seat.station.screen.material.color.set(v==='terminal'?'#99e6b2':v==='waiting'?'#efbf88':'#ffffff');}}
+ if(c.motion==='lounging')c.state=c.loungeSpot?.sitting?'sitting':'idle';
  animateCharacter(c,dt,t);c.book.visible=c.motion==='seated'&&v==='reading';if(c.motion==='seated'&&v==='reading'){for(const l of Object.values(c.limbs)){l.arm.rotation.x=T.MathUtils.damp(l.arm.rotation.x,-1,8,dt);l.fore.rotation.x=T.MathUtils.damp(l.fore.rotation.x,-1.2,8,dt);}}if(c.motion==='seated'&&v==='waiting'){c.limbs.r.arm.rotation.x=T.MathUtils.damp(c.limbs.r.arm.rotation.x,-2.2,8,dt);c.limbs.r.fore.rotation.x=-.25;}if(c.motion==='seated'&&v==='delegating')c.limbs.r.arm.rotation.x=-1.5+Math.sin(t*3)*.14;
 }
 function updateActor(c,dt,t){const v=visualState(c.agent);
- if(v==='leaving'&&!['leaving','exited'].includes(c.motion)){if(c.finishedAt===null)c.finishedAt=t;if(t-c.finishedAt>3){if(c.seat.station)powerScreen(c.seat.station,false);route(c,{x:1.45,z:5.25},'leaving');}}
- if(v!=='leaving'&&c.exitComplete){c.exitComplete=false;c.root.visible=true;c.finishedAt=null;const seat=reserveSeat(c.id);if(seat)c.seat=seat;route(c,c.seat,'arriving');}
+ if(v==='leaving'&&!['leaving','exited'].includes(c.motion)){if(c.finishedAt===null)c.finishedAt=t;if(t-c.finishedAt>3){if(c.seat.station)powerScreen(c.seat.station,false);standFromLounge(c);c.loungeSpot=null;route(c,{x:1.45,z:5.25},'leaving');}}
+ if(v!=='leaving'&&c.exitComplete){c.exitComplete=false;c.root.visible=true;c.finishedAt=null;const seat=reserveSeat(c.id);if(seat)c.seat=seat;relocate(c,desiredLocation(c.agent));}
+ if(v!=='leaving'){c.finishedAt=null;const destination=desiredLocation(c.agent);if(c.destination!==destination)relocate(c,destination);}
  if(c.path.length){const p=c.path[0],dx=p.x-c.root.position.x,dz=p.z-c.root.position.z,dist=Math.hypot(dx,dz);let hold=false;for(const d of doors){if(Math.hypot(c.root.position.x-d.x,c.root.position.z-d.z)<1.0&&Math.abs(p.x-d.x)<.9&&Math.abs(p.z-d.z)<.55){d.open=true;d.hold=1.5;if(Math.abs(d.angle)<1)hold=true;}}if(!hold){const move=dt*1.75;if(dist<=move){c.root.position.x=p.x;c.root.position.z=p.z;c.path.shift();}else{c.root.position.x+=dx/dist*move;c.root.position.z+=dz/dist*move;}if(dist>.001)c.root.rotation.y=Math.atan2(dx,dz);}}
  else if(c.motion==='arriving'){c.motion='seated';c.root.position.set(c.seat.x,0,c.seat.z);c.root.rotation.y=c.seat.angle;}
+ else if(c.motion==='to-lounge'){const s=c.loungeSpot;c.motion='lounging';c.root.position.set(s.sitX??s.x,s.height||0,s.sitZ??s.z);c.root.rotation.y=s.angle;}
  else if(c.motion==='leaving'){c.motion='exited';c.exitComplete=true;c.root.visible=false;c.label.hidden=true;}
  applyPose(c,dt,t);
 }
-function labels(){for(const c of actors.values()){updateBubble(c.bubble,(c.agent.kind==='subagent'?'↳ ':'')+c.agent.label,liveActivity(c.agent,c.motion,c.path.length>0),{selected:c.id===selected,waiting:visualState(c.agent)==='waiting',subagent:c.agent.kind==='subagent'});}placeBubbles(actors.values(),camera,renderer.domElement);}
+function labels(){for(const c of actors.values()){c.bubble.element.dataset.location=c.motion;updateBubble(c.bubble,(c.agent.kind==='subagent'?'↳ ':'')+c.agent.label,liveActivity(c.agent,c.motion,c.path.length>0),{selected:c.id===selected,waiting:visualState(c.agent)==='waiting',subagent:c.agent.kind==='subagent'});}placeBubbles(actors.values(),camera,renderer.domElement);}
 const ray=new T.Raycaster(),mouse=new T.Vector2();let down=null;renderer.domElement.addEventListener('pointerdown',e=>{if(e.button===0)down=[e.clientX,e.clientY];});renderer.domElement.addEventListener('pointerup',e=>{if(e.button!==0||!down)return;const moved=Math.hypot(e.clientX-down[0],e.clientY-down[1]);down=null;if(moved>6)return;const r=renderer.domElement.getBoundingClientRect();mouse.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(mouse,camera);const h=ray.intersectObjects(pickable.filter(p=>p.parent.visible),false)[0];if(h)choose(h.object.userData.actor);});renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
 $('reset-camera').onclick=resetCamera;$('zoom-in').onclick=()=>{camera.zoom=Math.min(3.5,camera.zoom*1.18);camera.updateProjectionMatrix();};$('zoom-out').onclick=()=>{camera.zoom=Math.max(.65,camera.zoom/1.18);camera.updateProjectionMatrix();};$('focus-agent').onclick=focusSelected;$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'▶':'Ⅱ';$('pause').setAttribute('aria-label',paused?'Lanjutkan animasi':'Jeda animasi');};$('sound').onclick=async()=>{sound=!sound;if(sound){audio ||= new AudioContext();await audio.resume();}try{localStorage.setItem('virtue-sound',String(sound));}catch{}$('sound').setAttribute('aria-pressed',String(sound));$('sound').setAttribute('aria-label',sound?'Matikan suara notifikasi':'Aktifkan suara notifikasi');};
 $('loading').style.opacity=0;setTimeout(()=>$('loading')?.remove(),500);poll();
