@@ -14,3 +14,50 @@ jobs:
       - run: python -m unittest discover -s tests -v
       - run: npm test
       - run: node --check web/app.js && node --check web/playground.js
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      HERMES_HOME_HOST: ${{ runner.temp }}/virtue-hermes
+      OFFICE_PASSWORD_FILE: ${{ runner.temp }}/virtue-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare shared state and test password
+        run: |
+          mkdir -p "$HERMES_HOME_HOST/virtue-office"
+          printf '%s' 'ci-test-only' > "$OFFICE_PASSWORD_FILE"
+          chmod 600 "$OFFICE_PASSWORD_FILE"
+          echo "OFFICE_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "OFFICE_GID=$(id -g)" >> "$GITHUB_ENV"
+      - run: docker compose config --quiet
+      - run: docker compose up -d --build
+      - name: Verify viewer without Hermes activity
+        run: |
+          python3 - <<'PY'
+          import time
+          from urllib.request import urlopen
+          from urllib.error import HTTPError
+          for attempt in range(60):
+              try:
+                  with urlopen('http://127.0.0.1:8114/health', timeout=2) as response:
+                      assert response.status == 200
+                  break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit('Office did not become available without Hermes')
+          with urlopen('http://127.0.0.1:8114/login') as response:
+              assert b'PASSWORD KANTOR' in response.read()
+          try:
+              urlopen('http://127.0.0.1:8114/state')
+          except HTTPError as error:
+              assert error.code == 401
+              error.close()
+          else:
+              raise SystemExit('Office state was exposed without login')
+          PY
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --tail=100
+      - name: Stop test container
+        if: always()
+        run: docker compose down

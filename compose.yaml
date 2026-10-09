@@ -1,0 +1,31 @@
+services:
+  virtue-office:
+    build:
+      context: .
+      args:
+        OFFICE_UID: ${OFFICE_UID:-1000}
+        OFFICE_GID: ${OFFICE_GID:-1000}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:8114:8114"
+    environment:
+      VIRTUE_OFFICE_PASSWORD_FILE: /run/secrets/office_password
+    volumes:
+      - type: bind
+        source: ${HERMES_HOME_HOST:?Set HERMES_HOME_HOST to the host directory containing Hermes data}/virtue-office
+        target: /data
+        bind:
+          create_host_path: false
+    secrets:
+      - office_password
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+secrets:
+  office_password:
+    file: ${OFFICE_PASSWORD_FILE:?Set OFFICE_PASSWORD_FILE to your existing password file}

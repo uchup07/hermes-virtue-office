@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import logging
+import signal
 from pathlib import Path
 import tempfile
 import threading
@@ -40,6 +41,7 @@ def demo(runtime, stop):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--host", choices=("127.0.0.1", "0.0.0.0"), default="127.0.0.1", help="Use 0.0.0.0 inside a Docker container")
     p.add_argument("--port", type=int, default=office.DEFAULT_PORT)
     p.add_argument("--demo", action="store_true", help="Synthetic activity in a temporary isolated database")
     p.add_argument("--data-dir", type=Path, help="Use an explicit shared state directory")
@@ -54,15 +56,18 @@ def main():
         p.error("set VIRTUE_OFFICE_PASSWORD or VIRTUE_OFFICE_PASSWORD_FILE before starting")
     temp = tempfile.TemporaryDirectory(prefix="virtue-office-demo-") if args.demo else None
     directory = Path(temp.name) if temp else args.data_dir or Path(office.os.environ.get("HERMES_HOME", Path.home()/".hermes"))/"virtue-office"
-    runtime = office.Runtime(directory, args.port, "demo" if args.demo else "live")
+    runtime = office.Runtime(directory, args.port, "demo" if args.demo else "live", server_mode="external")
     # Standalone startup reports port conflicts immediately.
-    server = office.OfficeServer(("127.0.0.1", args.port), office.make_handler(runtime.store, runtime.mode, auth))
+    server = office.OfficeServer((args.host, args.port), office.make_handler(runtime.store, runtime.mode, auth))
     runtime.server = server
     stop = threading.Event()
     feed = threading.Thread(target=demo, args=(runtime, stop), daemon=True) if args.demo else None
     if feed:
         feed.start()
     print(f"Virtue Office ({runtime.mode}): http://127.0.0.1:{args.port}", flush=True)
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, terminate)
     try:
         server.serve_forever(poll_interval=.2)
     except KeyboardInterrupt:

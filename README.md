@@ -17,6 +17,10 @@ Configure a password as described below. Start a **new Hermes session**, then op
 
 The office observes Hermes; approval decisions are still made in Hermes. A character is assigned to each session, with separate characters for subagents.
 
+## Keep a public office online (Docker/VPS)
+
+For an office that remains accessible without any active Hermes session, run the included **separate Docker viewer**. Follow [the Docker deployment guide](deploy/DOCKER.md). It includes shared state, password-file configuration, automatic restart and proxy instructions. Set the Hermes plugin `server_mode: external` when using this deployment. The default embedded viewer ends when its host Hermes process exits.
+
 ## Password-protected access
 
 All office pages, JavaScript, models and `/state` require a login. When no password is configured, the office stays locked and the standalone server refuses to start. `/health` remains public for a minimal service check.
@@ -113,11 +117,11 @@ python3 -m unittest discover -s tests -v
 npm test
 ```
 
-Tests cover hook registration, approval and lifecycle mapping, shared state across processes, database contention, server takeover, static-file containment, read-only HTTP behavior character navigation, login enforcement, wrong passwords, CSRF protection, rate limits, session expiry and logout. CI runs these checks on pushes and pull requests.
+Tests cover hook registration, approval and lifecycle mapping, shared state across processes, database contention, server takeover, static-file containment, read-only HTTP behavior, character navigation, login enforcement, wrong passwords, CSRF protection, rate limits, session expiry and logout. CI runs these checks on pushes and pull requests.
 
 The implementation was checked against the Hermes plugin API at commit `1744a19e0df568c647e4f3ff9c37f2a284a282fb`, with simulated hook payloads and a browser demo. A real Hermes/LLM session has not been run in this development environment; compatibility with other Hermes revisions may require adjustments.
 
-Animations are procedural in the browser; the bundled GLB characters are models, not a baked animation library. If a Hermes process crashes without an end event, its last state can remain until expiry (24 hours). Approval events without a session ID use the active hook context when available, otherwise a process-level identity. Closing the process hosting the viewer may briefly interrupt it until another active process receives an event and takes over.
+Animations are procedural in the browser; the bundled GLB characters are models, not a baked animation library. If a Hermes process crashes without an end event, its last state can remain until expiry (24 hours). Approval events without a session ID use the active hook context when available, otherwise a process-level identity. In embedded mode, closing the process hosting the viewer interrupts it until another active process receives an event and takes over. Use the separate Docker viewer for persistent public access.
 
 ## Credits
 

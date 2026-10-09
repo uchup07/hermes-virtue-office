@@ -141,6 +141,14 @@ class StateTests(unittest.TestCase):
         with patch.object(plugin,"runtime",side_effect=RuntimeError("secret")):
             for callback in callbacks.values():self.assertIsNone(callback(session_id="main"))
 
+    def test_external_mode_records_without_starting_a_web_server(self):
+        runtime = plugin.Runtime(self.temp.name, server_mode="external")
+        runtime.observe("session_start", session_id="outside")
+        runtime.observe("tool_start", session_id="outside", tool_name="read_file")
+        self.assertIsNone(runtime.thread)
+        self.assertIsNone(runtime.server)
+        self.assertEqual(runtime.store.snapshot()["agents"][0]["activity"], "reading")
+
     def test_locked_database_does_not_veto_tools(self):
         runtime=plugin.Runtime(self.temp.name)
         lock=sqlite3.connect(self.store.path)

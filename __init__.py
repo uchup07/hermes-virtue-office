@@ -380,10 +380,13 @@ def make_handler(store, mode="live", auth=None):
 
 
 class Runtime:
-    def __init__(self, directory, port=DEFAULT_PORT, mode="live"):
+    def __init__(self, directory, port=DEFAULT_PORT, mode="live", server_mode=None):
         self.store = Store(directory)
         self.port = port
         self.mode = mode
+        self.server_mode = server_mode or os.environ.get("VIRTUE_OFFICE_SERVER_MODE", "embedded")
+        if self.server_mode not in ("embedded", "external"):
+            raise ValueError("server_mode must be embedded or external")
         self.server = None
         self.thread = None
         self.lock = threading.Lock()
@@ -392,7 +395,7 @@ class Runtime:
     def ensure_server(self):
         # Retry on later events: a surviving Hermes process takes over the port
         # after its previous owner exits. Never probe/block in the agent hook.
-        if self.server or time.monotonic() - self.last_attempt < 3:
+        if self.server_mode == "external" or self.server or time.monotonic() - self.last_attempt < 3:
             return
         with self.lock:
             if self.server or time.monotonic() - self.last_attempt < 3:
@@ -440,9 +443,13 @@ def runtime():
     with _runtime_lock:
         if _runtime is None:
             port = DEFAULT_PORT
+            server_mode = os.environ.get("VIRTUE_OFFICE_SERVER_MODE", "embedded")
             try:
                 from hermes_cli.config import cfg_get, load_config
                 configured = cfg_get(load_config(), "plugins", "entries", "virtue-office", "port")
+                configured_mode = cfg_get(load_config(), "plugins", "entries", "virtue-office", "server_mode")
+                if configured_mode is not None:
+                    server_mode = str(configured_mode)
                 if configured is not None:
                     port = int(configured)
                 if not 1024 <= port <= 65535:
@@ -450,7 +457,7 @@ def runtime():
             except (ImportError, TypeError, ValueError, OSError):
                 pass
             home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-            _runtime = Runtime(home / "virtue-office", port)
+            _runtime = Runtime(home / "virtue-office", port, server_mode=server_mode)
     return _runtime
 
 
@@ -463,4 +470,4 @@ def register(ctx):
                 logger.warning("virtue-office unavailable (%s)", type(exc).__name__)
             return None
         ctx.register_hook(hook_name, callback)
-    logger.info("virtue-office registered; the office starts with the first session event")
+    logger.info("virtue-office hooks registered; embedded mode starts a viewer on the first event, external mode uses a separate viewer")
