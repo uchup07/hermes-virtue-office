@@ -1,0 +1,13 @@
+name: virtue-office
+version: "0.1.0"
+description: "Live isometric 3D office for Hermes Agent. Observe sessions, tools, subagents and approval requests at http://127.0.0.1:8114. Local and read-only."
+author: "uchup07"
+hooks:
+  - on_session_start
+  - on_session_end
+  - pre_tool_call
+  - post_tool_call
+  - subagent_start
+  - subagent_stop
+  - pre_approval_request
+  - post_approval_response
