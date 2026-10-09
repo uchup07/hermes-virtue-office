@@ -70,7 +70,7 @@ No package installation, Node.js or external CDN is needed to run the viewer. Us
 
 Idle agents walk to the lower-right lounge, sit on the sofa/chair or wait beside the coffee table. Their assigned work seat stays reserved; new activity sends them back to that same seat. Thinking, active tools and approval requests remain at the workstations.
 
-Speech bubbles above every visible character describe their current activity in Indonesian. Live bubbles follow Hermes tool/lifecycle metadata (they do not reveal prompts or tool arguments); approval requests have an amber bubble. In the playground, bubbles follow walking, sitting, computer power, door interactions and task completion.
+Speech bubbles describe each character's current activity in Indonesian. A new command/event shows the bubble for two seconds, then it hides until another event arrives. Repeated polling, camera movement, selection and character arrival do not restart this timer. Live bubbles follow Hermes tool/lifecycle metadata (they do not reveal prompts or tool arguments); approval requests have an amber bubble. In the playground, bubbles follow walking, sitting, computer power, door interactions and task completion.
 
 Right-drag rotates the camera; scroll zooms. The isometric button resets the view. Pause affects animation only. Sound notifications are opt-in.
 

@@ -5,6 +5,7 @@ import {people,loadCharacter,animateCharacter} from './characters.js';
 import {pathfind} from './nav.js';
 import {MAX_VISIBLE,visualState,describe,chooseAvatar,validSnapshot} from './live-state.js';
 import {desiredLocation,freeLoungeSpot} from './lounge.js';
+import {liveBubbleKey} from './bubble-timing.js';
 import {liveActivity} from './activity-text.js';
 import {createBubble,updateBubble,placeBubbles} from './activity-bubbles.js';
 const $=id=>document.getElementById(id),mount=$('scene');
@@ -80,7 +81,7 @@ function updateActor(c,dt,t){const v=visualState(c.agent);
  else if(c.motion==='leaving'){c.motion='exited';c.exitComplete=true;c.root.visible=false;c.label.hidden=true;}
  applyPose(c,dt,t);
 }
-function labels(){for(const c of actors.values()){c.bubble.element.dataset.location=c.motion;updateBubble(c.bubble,(c.agent.kind==='subagent'?'↳ ':'')+c.agent.label,liveActivity(c.agent,c.motion,c.path.length>0),{selected:c.id===selected,waiting:visualState(c.agent)==='waiting',subagent:c.agent.kind==='subagent'});}placeBubbles(actors.values(),camera,renderer.domElement);}
+function labels(){for(const c of actors.values()){c.bubble.element.dataset.location=c.motion;updateBubble(c.bubble,(c.agent.kind==='subagent'?'↳ ':'')+c.agent.label,liveActivity(c.agent,c.motion,c.path.length>0),{eventKey:liveBubbleKey(c.agent),selected:c.id===selected,waiting:visualState(c.agent)==='waiting',subagent:c.agent.kind==='subagent'});}placeBubbles(actors.values(),camera,renderer.domElement);}
 const ray=new T.Raycaster(),mouse=new T.Vector2();let down=null;renderer.domElement.addEventListener('pointerdown',e=>{if(e.button===0)down=[e.clientX,e.clientY];});renderer.domElement.addEventListener('pointerup',e=>{if(e.button!==0||!down)return;const moved=Math.hypot(e.clientX-down[0],e.clientY-down[1]);down=null;if(moved>6)return;const r=renderer.domElement.getBoundingClientRect();mouse.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(mouse,camera);const h=ray.intersectObjects(pickable.filter(p=>p.parent.visible),false)[0];if(h)choose(h.object.userData.actor);});renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
 $('reset-camera').onclick=resetCamera;$('zoom-in').onclick=()=>{camera.zoom=Math.min(3.5,camera.zoom*1.18);camera.updateProjectionMatrix();};$('zoom-out').onclick=()=>{camera.zoom=Math.max(.65,camera.zoom/1.18);camera.updateProjectionMatrix();};$('focus-agent').onclick=focusSelected;$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'▶':'Ⅱ';$('pause').setAttribute('aria-label',paused?'Lanjutkan animasi':'Jeda animasi');};$('sound').onclick=async()=>{sound=!sound;if(sound){audio ||= new AudioContext();await audio.resume();}try{localStorage.setItem('virtue-sound',String(sound));}catch{}$('sound').setAttribute('aria-pressed',String(sound));$('sound').setAttribute('aria-label',sound?'Matikan suara notifikasi':'Aktifkan suara notifikasi');};
 $('loading').style.opacity=0;setTimeout(()=>$('loading')?.remove(),500);poll();

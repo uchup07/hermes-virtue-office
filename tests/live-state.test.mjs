@@ -38,3 +38,22 @@ test('lounge spots are exclusive and sofa approaches avoid furniture',()=>{
  const furniture=[{x:5.3,z:3.46,w:1.2,d:2.9},{x:3.61,z:3.42,w:.98,d:1.94},{x:5.22,z:.65,w:1.43,d:.6}];
  for(const spot of loungeSpots){assert.equal(blocked(spot.x,spot.z,furniture),false);assert.ok(pathfind({x:1.45,z:5.1},spot,furniture));}
 });
+
+import {refreshBubble,liveBubbleKey} from '../web/bubble-timing.js';
+test('bubble expires after two seconds and identical polls do not refresh it',()=>{
+ const timer={activityKey:null,visibleUntil:0};
+ assert.equal(refreshBubble(timer,'read_file',100),true);
+ assert.equal(refreshBubble(timer,'read_file',2099),true);
+ assert.equal(refreshBubble(timer,'read_file',2100),false);
+ assert.equal(refreshBubble(timer,'read_file',6000),false);
+ assert.equal(refreshBubble(timer,'new-command',6000),true);
+ assert.equal(timer.visibleUntil,8000);
+});
+test('a repeated tool command with a new event refreshes its bubble',()=>{
+ const agent={updated_at:10,status:'working',tool:'read_file',tools_completed:0};
+ const timer={};
+ refreshBubble(timer,liveBubbleKey(agent),0);
+ assert.equal(refreshBubble(timer,liveBubbleKey({...agent}),2000),false);
+ assert.equal(refreshBubble(timer,liveBubbleKey({...agent,status:'idle'}),2050),false);
+ assert.equal(refreshBubble(timer,liveBubbleKey({...agent,updated_at:11}),2100),true);
+});

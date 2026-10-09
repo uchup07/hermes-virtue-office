@@ -1,4 +1,5 @@
 import {Vector3} from 'three';
+import {refreshBubble} from './bubble-timing.js';
 const projection = new Vector3();
 export function createBubble(container) {
   const element = document.createElement('div');
@@ -7,9 +8,10 @@ export function createBubble(container) {
   const message = document.createElement('span');
   element.append(name, message);
   container.append(element);
-  return {element, name, message};
+  return {element, name, message, activityKey:null, visibleUntil:0};
 }
-export function updateBubble(bubble, name, message, {selected=false, waiting=false, subagent=false}={}) {
+export function updateBubble(bubble, name, message, {selected=false, waiting=false, subagent=false, eventKey=null}={}) {
+  refreshBubble(bubble, JSON.stringify(eventKey ?? message), performance.now());
   if (bubble.name.textContent !== name) bubble.name.textContent = name;
   if (bubble.message.textContent !== message) bubble.message.textContent = message;
   bubble.element.classList.toggle('selected', selected);
@@ -26,7 +28,7 @@ export function placeBubbles(characters, camera, canvas) {
     projection.copy(character.root.position);
     projection.y += 1.78;
     projection.project(camera);
-    if (!character.root.visible || Math.abs(projection.x)>1 || Math.abs(projection.y)>1 || Math.abs(projection.z)>1) {
+    if (performance.now() >= character.bubble.visibleUntil || !character.root.visible || Math.abs(projection.x)>1 || Math.abs(projection.y)>1 || Math.abs(projection.z)>1) {
       element.hidden = true;
       continue;
     }
